@@ -3,6 +3,7 @@ import pandas as pd
 import joblib
 from pathlib import Path
 from xgboost import XGBRegressor
+from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 
 def prepare_data():
@@ -44,6 +45,37 @@ def prepare_data():
     # Return prepared datasets
     return X_train, X_val, y_train, y_val
 
+
+def evaluate_model(model, X_val, y_val):
+
+    # Generate predictions on validation data
+    y_pred = model.predict(X_val)
+
+    # Calculate evaluation metrics
+    mae = mean_absolute_error(y_val, y_pred)
+
+    rmse = mean_squared_error(
+        y_val,
+        y_pred
+    ) ** 0.5
+
+    print("\nModel Evaluation Results")
+    print("------------------------")
+    print(f"MAE:  {mae:.2f} cycles")
+    print(f"RMSE: {rmse:.2f} cycles")
+
+    # Compare actual and predicted values
+    results = pd.DataFrame({
+        "Actual_RUL": y_val.values,
+        "Predicted_RUL": y_pred
+    })
+
+    print("\nSample Predictions:")
+    print(results.head(10).round(2))
+
+    return y_pred
+
+
 def train_model(X_train, y_train):
 
     model = XGBRegressor(
@@ -81,3 +113,5 @@ if __name__ == "__main__":
     print("Training features:", X_train.shape)
 
     model = train_model(X_train, y_train)
+
+    evaluate_model(model, X_val, y_val)
