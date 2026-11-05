@@ -149,3 +149,53 @@ class EngineSimulation:
 
         return result
 
+class FleetSimulationManager:
+    """
+    Manages independent simulations for all validation engines.
+
+    Each call to process_next_cycle() advances every unfinished
+    engine by exactly one cycle.
+    """
+
+    def __init__(self, df, models):
+        self.engine_ids = get_engine_ids(df)
+
+        self.simulations = {
+            engine_id: EngineSimulation(
+                engine_id=engine_id,
+                df=df,
+                models=models
+            )
+            for engine_id in self.engine_ids
+        }
+
+    @property
+    def total_engines(self):
+        return len(self.engine_ids)
+
+    @property
+    def is_finished(self):
+        return all(
+            simulation.is_finished
+            for simulation in self.simulations.values()
+        )
+
+    def process_next_cycle(self):
+        """
+        Advance every unfinished engine by one cycle.
+
+        Returns:
+            Dictionary mapping engine IDs to their cycle results.
+        """
+
+        results = {}
+
+        for engine_id, simulation in self.simulations.items():
+            result = simulation.process_next_cycle()
+
+            if result is not None:
+                results[engine_id] = result
+
+        return results
+
+    
