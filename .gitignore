@@ -1,0 +1,30 @@
+# Virtual environment
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Raw datasets - download separately
+data/raw/*
+!data/raw/.gitkeep
+
+# Generated datasets
+data/processed/*
+!data/processed/.gitkeep
+
+# Trained model artifacts
+models/*
+!models/.gitkeep
+
+# Temporary files
+*.log
+.env
+
+# OS files
+.DS_Store
+Thumbs.db
