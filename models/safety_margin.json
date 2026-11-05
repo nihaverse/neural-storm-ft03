@@ -1,0 +1,8 @@
+
+{
+    "safety_margin": 14.1812,
+    "source": "validation_low_rul_overprediction_p75",
+    "low_rul_threshold": 50,
+    "percentile": 75,
+    "maximum_cap": 15.0
+}

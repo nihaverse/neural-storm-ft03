@@ -37,6 +37,8 @@ expected_features = list(xgb_model.feature_names_in_)
 streaming_results = []
 feature_differences = []
 prediction_differences = []
+final_rul_differences = []
+health_index_differences = []
 anomaly_flag_mismatches = []
 anomaly_score_differences = []
 
@@ -82,8 +84,27 @@ for index, reading in engine_raw.iterrows():
         )[0]
     )
 
+    # Raw prediction parity.
     prediction_differences.append(
         abs(result["raw_rul"] - reference_rul)
+    )
+
+    # Final RUL parity after applying the same saved margin.
+    expected_final_rul = float(
+        np.clip(reference_rul - result["safety_margin"], 0, 125)
+    )
+
+    final_rul_differences.append(
+        abs(result["final_rul"] - expected_final_rul)
+    )
+
+    # Health Index consistency.
+    expected_health_index = float(
+        np.clip((expected_final_rul / 125) * 100, 0, 100)
+    )
+
+    health_index_differences.append(
+        abs(result["health_index"] - expected_health_index)
     )
 
     anomaly_flag_mismatches.append(
@@ -97,7 +118,9 @@ for index, reading in engine_raw.iterrows():
     streaming_results.append({
         "cycle": int(reading["cycle"]),
         "actual_rul": int(reading["RUL"]),
-        "predicted_rul": result["estimated_rul"],
+        "raw_rul": result["raw_rul"],
+        "final_rul": result["final_rul"],
+        "health_index": result["health_index"],
         "anomaly": result["is_anomaly"],
         "anomaly_score": result["anomaly_score"]
     })
@@ -118,6 +141,16 @@ print(
 print(
     "Maximum raw RUL prediction difference:",
     max(prediction_differences)
+)
+
+print(
+    "Maximum final RUL difference:",
+    max(final_rul_differences)
+)
+
+print(
+    "Maximum Health Index difference:",
+    max(health_index_differences)
 )
 
 print(
