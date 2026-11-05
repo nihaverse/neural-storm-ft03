@@ -4,6 +4,7 @@ import joblib
 from pathlib import Path
 from xgboost import XGBRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error
+import matplotlib.pyplot as plt
 
 
 def prepare_data():
@@ -76,6 +77,54 @@ def evaluate_model(model, X_val, y_val):
     return y_pred
 
 
+def plot_predictions(y_val, y_pred):
+
+    # Create output directory
+    plot_dir = Path("outputs/plots")
+    plot_dir.mkdir(parents=True, exist_ok=True)
+
+    plt.figure(figsize=(9, 6))
+
+    # Actual vs predicted values
+    plt.scatter(
+        y_val,
+        y_pred,
+        alpha=0.35,
+        s=18,
+        label="Predictions"
+    )
+
+    # Ideal prediction line
+    plt.plot(
+        [0, 130],
+        [0, 130],
+        linestyle="--",
+        linewidth=2,
+        label="Perfect Prediction"
+    )
+
+    plt.xlabel("Actual RUL (cycles)")
+    plt.ylabel("Predicted RUL (cycles)")
+    plt.title("Actual vs Predicted Remaining Useful Life")
+
+    plt.xlim(0, 130)
+    plt.ylim(0, 140)
+
+    plt.legend()
+    plt.grid(alpha=0.25)
+    plt.tight_layout()
+
+    # Save the plot
+    plot_path = plot_dir / "actual_vs_predicted.png"
+
+    plt.savefig(plot_path, dpi=150)
+
+    print(f"\nPrediction plot saved at: {plot_path}")
+
+    plt.show()
+    plt.close()
+
+
 def train_model(X_train, y_train):
 
     model = XGBRegressor(
@@ -114,4 +163,6 @@ if __name__ == "__main__":
 
     model = train_model(X_train, y_train)
 
-    evaluate_model(model, X_val, y_val)
+    y_pred = evaluate_model(model, X_val, y_val)
+
+    plot_predictions(y_val, y_pred)
