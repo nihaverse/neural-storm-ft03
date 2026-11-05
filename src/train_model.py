@@ -1,5 +1,8 @@
 
 import pandas as pd
+import joblib
+from pathlib import Path
+from xgboost import XGBRegressor
 
 
 def prepare_data():
@@ -41,23 +44,40 @@ def prepare_data():
     # Return prepared datasets
     return X_train, X_val, y_train, y_val
 
+def train_model(X_train, y_train):
+
+    model = XGBRegressor(
+        n_estimators=400,
+        max_depth=5,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        objective="reg:squarederror",
+        random_state=42,
+        n_jobs=-1
+    )
+
+    print("Training XGBoost model...")
+
+    model.fit(X_train, y_train)
+
+    print("Model training completed!")
+
+    model_dir = Path("models")
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    model_path = model_dir / "xgboost_rul_model.pkl"
+
+    joblib.dump(model, model_path)
+
+    print(f"Model saved at: {model_path}")
+
+    return model
 
 if __name__ == "__main__":
 
     X_train, X_val, y_train, y_val = prepare_data()
 
-    print("Data preparation completed!")
+    print("Training features:", X_train.shape)
 
-    print("\nTraining features:", X_train.shape)
-    print("Validation features:", X_val.shape)
-
-    print("\nTraining target:", y_train.shape)
-    print("Validation target:", y_val.shape)
-
-    print("\nNumber of input features:", X_train.shape[1])
-
-    print("\nTraining RUL range:")
-    print(y_train.min(), "to", y_train.max())
-
-    print("\nValidation RUL range:")
-    print(y_val.min(), "to", y_val.max())
+    model = train_model(X_train, y_train)
