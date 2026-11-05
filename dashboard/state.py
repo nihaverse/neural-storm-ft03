@@ -126,6 +126,21 @@ def update_engine_state(engine_id, cycle, prediction):
     engine_states = st.session_state["engine_states"]
     previous_state = engine_states.get(engine_id)
 
+        # Prevent duplicate or out-of-order cycle updates.
+    if previous_state is not None:
+        previous_cycle = previous_state["current_cycle"]
+
+        if cycle == previous_cycle:
+            # Idempotent: do not count the same anomaly twice.
+            return previous_state
+
+        if cycle < previous_cycle:
+            raise ValueError(
+                f"Out-of-order update for Engine {engine_id}: "
+                f"received cycle {cycle}, "
+                f"but current cycle is {previous_cycle}."
+            )
+        
     # Maintain consecutive anomaly count.
     previous_count = (
         previous_state["consecutive_anomalies"]

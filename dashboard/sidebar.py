@@ -151,7 +151,7 @@ def render_sidebar(overview_page, live_monitoring_page, alerts_page):
             key="simulation_speed"
         )
 
-        st.slider(
+        warning_threshold = st.slider(
             "Warning after (consecutive cycles)",
             min_value=1,
             max_value=10,
@@ -159,9 +159,13 @@ def render_sidebar(overview_page, live_monitoring_page, alerts_page):
             key="warning_threshold"
         )
 
+        # Critical must always occur after Warning.
+        if st.session_state["critical_threshold"] <= warning_threshold:
+            st.session_state["critical_threshold"] = warning_threshold + 1
+
         st.slider(
             "Critical after (consecutive cycles)",
-            min_value=1,
+            min_value=warning_threshold + 1,
             max_value=15,
             step=1,
             key="critical_threshold"

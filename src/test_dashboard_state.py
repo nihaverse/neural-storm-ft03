@@ -103,3 +103,52 @@ print("All dashboard state tests passed.")
 print("\nEngine 1 recent alert activity:")
 for event in st.session_state["recent_alert_activity"]:
     print(event["message"])
+
+
+# Test duplicate cycle protection.
+engine_id = 100
+
+prediction = {
+    "raw_rul": 80.0,
+    "safety_margin": 14.1812,
+    "final_rul": 65.8188,
+    "health_index": 52.655,
+    "is_anomaly": True,
+    "anomaly_score": -0.15,
+}
+
+first_state = update_engine_state(
+    engine_id,
+    1,
+    prediction
+)
+
+first_count = first_state["consecutive_anomalies"]
+
+# Submit the exact same cycle again.
+duplicate_state = update_engine_state(
+    engine_id,
+    1,
+    prediction
+)
+
+assert duplicate_state["consecutive_anomalies"] == first_count
+assert duplicate_state["current_cycle"] == 1
+
+# A new cycle should increment the anomaly streak.
+second_state = update_engine_state(
+    engine_id,
+    2,
+    prediction
+)
+
+assert second_state["consecutive_anomalies"] == first_count + 1
+
+# Older cycles must be rejected.
+try:
+    update_engine_state(engine_id, 1, prediction)
+    raise AssertionError("Out-of-order cycle was not rejected.")
+except ValueError:
+    pass
+
+print("Duplicate and out-of-order cycle tests passed.")
