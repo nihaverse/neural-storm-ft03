@@ -1,11 +1,7 @@
 import streamlit as st
 
 from state import initialize_session_state
-
-
-# --------------------------------------------------
-# PAGE CONFIGURATION
-# --------------------------------------------------
+from sidebar import render_sidebar
 
 st.set_page_config(
     page_title="NEURAL STORM | FT-03",
@@ -14,18 +10,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-
-# --------------------------------------------------
-# SHARED SESSION STATE
-# --------------------------------------------------
-
 initialize_session_state()
 
-
-# --------------------------------------------------
-# PAGE NAVIGATION
-# --------------------------------------------------
-
+# Define pages
 overview_page = st.Page(
     "pages/overview.py",
     title="Overview",
@@ -42,11 +29,7 @@ alerts_page = st.Page(
     title="Alerts"
 )
 
-
-# --------------------------------------------------
-# RUN SELECTED PAGE
-# --------------------------------------------------
-
+# Register pages BEFORE rendering custom sidebar
 selected_page = st.navigation(
     {
         "NEURAL STORM": [
@@ -55,7 +38,15 @@ selected_page = st.navigation(
             alerts_page
         ]
     },
-    position="sidebar"
+    position="hidden"
 )
 
+# Render custom sidebar
+render_sidebar(
+    overview_page,
+    live_monitoring_page,
+    alerts_page
+)
+
+# Run selected page
 selected_page.run()
