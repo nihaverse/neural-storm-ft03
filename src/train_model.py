@@ -125,6 +125,65 @@ def plot_predictions(y_val, y_pred):
     plt.close()
 
 
+def plot_feature_importance(model, feature_names):
+
+    # Get feature importance scores
+    importance = model.feature_importances_
+
+    importance_df = pd.DataFrame({
+        "Feature": feature_names,
+        "Importance": importance
+    })
+
+    # Sort from highest to lowest
+    importance_df = importance_df.sort_values(
+        by="Importance",
+        ascending=False
+    )
+
+    # Display top 15 features
+    top_features = importance_df.head(15)
+
+    print("\nTop 15 Important Features")
+    print("-------------------------")
+    print(top_features.to_string(index=False))
+
+    # Create output directory
+    plot_dir = Path("outputs/plots")
+    plot_dir.mkdir(parents=True, exist_ok=True)
+
+    # Plot horizontal bar chart
+    plt.figure(figsize=(10, 7))
+
+    plt.barh(
+        top_features["Feature"][::-1],
+        top_features["Importance"][::-1]
+    )
+
+    plt.xlabel("Feature Importance")
+    plt.ylabel("Sensor Features")
+    plt.title("Top 15 Features Influencing RUL Prediction")
+
+    plt.tight_layout()
+
+    # Save plot
+    plot_path = plot_dir / "feature_importance.png"
+
+    plt.savefig(plot_path, dpi=150)
+
+    # Save complete feature importance data
+    importance_df.to_csv(
+        "outputs/feature_importance.csv",
+        index=False
+    )
+
+    print(f"\nFeature importance plot saved at: {plot_path}")
+    print("Feature importance data saved.")
+
+    plt.show()
+    plt.close()
+
+
 def train_model(X_train, y_train):
 
     model = XGBRegressor(
@@ -166,3 +225,8 @@ if __name__ == "__main__":
     y_pred = evaluate_model(model, X_val, y_val)
 
     plot_predictions(y_val, y_pred)
+
+    plot_feature_importance(
+        model,
+        X_train.columns
+    )
