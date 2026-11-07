@@ -1,9 +1,15 @@
 
 from pathlib import Path
-from src.streaming_features import StreamingFeatureEngineer
-from src.inference import load_models, predict_engine_state
+from copy import deepcopy
 
 import pandas as pd
+
+from src.streaming_features import StreamingFeatureEngineer
+from src.inference import (
+    load_models,
+    predict_engine_state,
+    predict_engine_states,
+)
 
 
 VALIDATION_DATA_PATH = Path("data/processed/val_clean.csv")
@@ -55,7 +61,9 @@ def get_engine_readings(df, engine_id):
             f"Engine {engine_id} not found in simulation data."
         )
 
-    engine_df = engine_df.sort_values("cycle").reset_index(drop=True)
+    engine_df = engine_df.sort_values(
+        "cycle"
+    ).reset_index(drop=True)
 
     ground_truth_rul = engine_df["RUL"].copy()
 
@@ -66,13 +74,14 @@ def get_engine_readings(df, engine_id):
 
 class EngineSimulation:
     """
-    Processes one engine's validation readings sequentially.
+    Maintains sequential simulation state for one engine.
 
-    This class is independent of Streamlit.
-    Each instance maintains its own feature-engineering history.
+    Feature generation remains sequential.
+    Model inference can be performed individually or in batches.
     """
 
     def __init__(self, engine_id, df, models):
+
         self.engine_id = int(engine_id)
 
         self.readings, self.ground_truth_rul = get_engine_readings(
@@ -87,7 +96,6 @@ class EngineSimulation:
         )
 
         self.position = 0
-
         self.history = []
 
     @property
@@ -98,28 +106,92 @@ class EngineSimulation:
     def is_finished(self):
         return self.position >= self.total_cycles
 
-    def process_next_cycle(self):
+    def prepare_next_cycle(self):
         """
-        Process exactly one new reading.
+        Generate features for the next reading without committing state.
 
-        Returns None if the engine has completed its available cycles.
+        A temporary feature engineer ensures that failed batch inference
+        does not corrupt the engine's sequential feature history.
         """
 
         if self.is_finished:
             return None
 
-        # Read the next observation without advancing the position yet.
         reading = self.readings.iloc[self.position]
 
         cycle = int(reading["cycle"])
 
-        # Generate streaming features.
-        features = self.feature_engineer.process_reading(reading)
+        # Work on a copy so the original state remains unchanged.
+        candidate_engineer = deepcopy(
+            self.feature_engineer
+        )
 
-        # Convert to a single-row DataFrame for inference.
-        feature_row = pd.DataFrame([features])
+        features = candidate_engineer.process_reading(
+            reading
+        )
 
-        # Run XGBoost and Isolation Forest.
+        actual_rul = int(
+            self.ground_truth_rul.iloc[self.position]
+        )
+
+        return {
+            "feature_engineer": candidate_engineer,
+            "features": features,
+            "cycle": cycle,
+            "actual_rul": actual_rul,
+            "sensor_readings": {
+                sensor: float(reading[sensor])
+                for sensor in self.sensor_columns
+            }
+        }
+
+    def commit_cycle(self, pending, prediction):
+        """
+        Commit feature-engineering state and inference results.
+
+        Called only after successful inference.
+        """
+
+        if pending is None:
+            return None
+
+        if self.is_finished:
+            raise RuntimeError(
+                f"Engine {self.engine_id} has already finished."
+            )
+
+        # Commit the successfully advanced feature engineer.
+        self.feature_engineer = pending["feature_engineer"]
+
+        result = {
+            "engine_id": self.engine_id,
+            "cycle": pending["cycle"],
+            "sensor_readings": pending["sensor_readings"],
+            "prediction": prediction,
+            "actual_rul": pending["actual_rul"],
+        }
+
+        self.history.append(result)
+        self.position += 1
+
+        return result
+
+    def process_next_cycle(self):
+        """
+        Process exactly one reading using single-row inference.
+
+        Retained for compatibility with existing single-engine workflows.
+        """
+
+        pending = self.prepare_next_cycle()
+
+        if pending is None:
+            return None
+
+        feature_row = pd.DataFrame([
+            pending["features"]
+        ])
+
         prediction = predict_engine_state(
             feature_row,
             self.xgb_model,
@@ -127,38 +199,27 @@ class EngineSimulation:
             self.sensor_columns
         )
 
-        # Keep ground truth separate from model inputs.
-        actual_rul = int(
-            self.ground_truth_rul.iloc[self.position]
+        return self.commit_cycle(
+            pending,
+            prediction
         )
 
-        result = {
-            "engine_id": self.engine_id,
-            "cycle": cycle,
-            "sensor_readings": {
-                sensor: float(reading[sensor])
-                for sensor in self.sensor_columns
-            },
-            "prediction": prediction,
-            "actual_rul": actual_rul,
-        }
-
-        # Commit progress only after successful inference.
-        self.history.append(result)
-        self.position += 1
-
-        return result
 
 class FleetSimulationManager:
     """
     Manages independent simulations for all validation engines.
 
-    Each call to process_next_cycle() advances every unfinished
-    engine by exactly one cycle.
+    Each call advances every unfinished engine by one cycle.
+
+    Feature generation is sequential per engine.
+    Model inference is performed in batches across the fleet.
     """
 
     def __init__(self, df, models):
+
         self.engine_ids = get_engine_ids(df)
+
+        self.models = models
 
         self.simulations = {
             engine_id: EngineSimulation(
@@ -182,20 +243,64 @@ class FleetSimulationManager:
 
     def process_next_cycle(self):
         """
-        Advance every unfinished engine by one cycle.
+        Advance all unfinished engines by one cycle.
+
+        Generates features sequentially, performs batch inference,
+        and commits results to their respective engine simulations.
 
         Returns:
             Dictionary mapping engine IDs to their cycle results.
         """
 
+        pending_cycles = []
+
+        # Step 1: Generate the next feature row for every unfinished engine.
+        for engine_id, simulation in self.simulations.items():
+
+            pending = simulation.prepare_next_cycle()
+
+            if pending is not None:
+                pending_cycles.append(
+                    (engine_id, pending)
+                )
+
+        if not pending_cycles:
+            return {}
+
+        # Step 2: Combine feature rows into one DataFrame.
+        feature_rows = pd.DataFrame([
+            pending["features"]
+            for _, pending in pending_cycles
+        ])
+
+        # Step 3: Perform batch inference.
+        predictions = predict_engine_states(
+            feature_rows,
+            self.models[0],
+            self.models[1],
+            self.models[2]
+        )
+
+        if len(predictions) != len(pending_cycles):
+            raise RuntimeError(
+                "Batch inference returned an unexpected number of results."
+            )
+
+        # Step 4: Commit results to the correct engines.
         results = {}
 
-        for engine_id, simulation in self.simulations.items():
-            result = simulation.process_next_cycle()
+        for (engine_id, pending), prediction in zip(
+            pending_cycles,
+            predictions
+        ):
 
-            if result is not None:
-                results[engine_id] = result
+            simulation = self.simulations[engine_id]
+
+            result = simulation.commit_cycle(
+                pending,
+                prediction
+            )
+
+            results[engine_id] = result
 
         return results
-
-    

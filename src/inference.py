@@ -24,6 +24,10 @@ def load_models():
     )
 
     anomaly_model = anomaly_artifact["model"]
+
+    # Avoid parallel scheduling overhead for single-row inference.
+    anomaly_model.set_params(n_jobs=1)
+
     sensor_columns = anomaly_artifact["sensor_columns"]
 
     return xgb_model, anomaly_model, sensor_columns
@@ -51,24 +55,28 @@ def load_safety_margin():
     return margin
 
 
-def predict_engine_state(
-    feature_row: pd.DataFrame,
+def predict_engine_states(
+    feature_rows: pd.DataFrame,
     xgb_model,
     anomaly_model,
     sensor_columns
 ):
     """
-    Predict final RUL and detect anomalous sensor behaviour.
+    Perform batch RUL prediction and anomaly detection.
 
-    Safety margin is applied exactly once here.
+    Each row represents one engine's current sequential reading.
+    Returns one prediction dictionary per input row, in the same order.
     """
 
-    # Ensure all expected XGBoost features exist.
+    if feature_rows.empty:
+        return []
+
+    # Validate XGBoost features.
     expected_features = list(xgb_model.feature_names_in_)
 
     missing_features = [
         col for col in expected_features
-        if col not in feature_row.columns
+        if col not in feature_rows.columns
     ]
 
     if missing_features:
@@ -76,46 +84,102 @@ def predict_engine_state(
             f"Missing XGBoost features: {missing_features}"
         )
 
+    # Validate anomaly detection sensor columns.
+    missing_sensors = [
+        col for col in sensor_columns
+        if col not in feature_rows.columns
+    ]
+
+    if missing_sensors:
+        raise ValueError(
+            f"Missing anomaly detection sensors: {missing_sensors}"
+        )
+
     # Preserve the exact feature order used during training.
-    xgb_input = feature_row[expected_features]
+    xgb_input = feature_rows.loc[:, expected_features]
+    anomaly_input = feature_rows.loc[:, sensor_columns]
 
-    # Raw XGBoost prediction.
-    raw_rul = float(xgb_model.predict(xgb_input)[0])
+    # Perform batch inference.
+    raw_predictions = np.asarray(
+        xgb_model.predict(xgb_input),
+        dtype=float
+    )
 
-    # Load saved calibration and apply safety margin exactly once.
+    anomaly_scores = np.asarray(
+        anomaly_model.decision_function(anomaly_input),
+        dtype=float
+    )
+
+    if len(raw_predictions) != len(feature_rows):
+        raise RuntimeError("XGBoost returned an unexpected number of predictions.")
+
+    if len(anomaly_scores) != len(feature_rows):
+        raise RuntimeError("Isolation Forest returned an unexpected number of scores.")
+
+    # Apply safety calibration exactly once.
     safety_margin = load_safety_margin()
 
-    final_rul = float(
-        np.clip(raw_rul - safety_margin, 0, 125)
+    final_predictions = np.clip(
+        raw_predictions - safety_margin,
+        0,
+        125
     )
 
-    # Health Index is derived from the same final RUL.
-    health_index = float(
-        np.clip((final_rul / 125) * 100, 0, 100)
+    health_indices = np.clip(
+        (final_predictions / 125) * 100,
+        0,
+        100
     )
 
-    # Anomaly detection using original sensor readings.
-    anomaly_input = feature_row[sensor_columns]
+    results = []
 
-    anomaly_prediction = anomaly_model.predict(
-        anomaly_input
-    )[0]
+    for raw_rul, final_rul, health, anomaly_score in zip(
+        raw_predictions,
+        final_predictions,
+        health_indices,
+        anomaly_scores
+    ):
+        results.append({
+            "raw_rul": float(raw_rul),
+            "safety_margin": safety_margin,
+            "final_rul": float(final_rul),
+            "health_index": float(health),
+            "is_anomaly": bool(anomaly_score < 0),
+            "anomaly_score": float(anomaly_score)
+        })
 
-    anomaly_score = float(
-        anomaly_model.decision_function(anomaly_input)[0]
+    return results
+
+
+def predict_engine_state(
+    feature_row: pd.DataFrame,
+    xgb_model,
+    anomaly_model,
+    sensor_columns
+):
+    """
+    Perform single-row inference using the batch inference function.
+
+    Preserves the existing function interface and return format.
+    """
+
+    results = predict_engine_states(
+        feature_row,
+        xgb_model,
+        anomaly_model,
+        sensor_columns
     )
 
-    return {
-        "raw_rul": raw_rul,
-        "safety_margin": safety_margin,
-        "final_rul": final_rul,
-        "health_index": health_index,
-        "is_anomaly": bool(anomaly_prediction == -1),
-        "anomaly_score": anomaly_score
-    }
+    if not results:
+        raise ValueError(
+            "Cannot predict an empty feature row."
+        )
+
+    return results[0]
 
 
 if __name__ == "__main__":
+
     # Smoke test using one existing validation observation.
     from src.train_model import prepare_data
 
